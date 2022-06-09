@@ -48,9 +48,9 @@ nrng_encode(struct nrng_instance * nrng, uint8_t seq_num, uint16_t base){
             }
         }
     }
-    // tdoa results are reference to slot 0, so reject it slot 0 did not respond. An alternative approach is needed @Niklas
-    if (valid_mask == 0 || (valid_mask & 1) == 0)
-       return;
+    if (valid_mask == 0)
+        // Nothing received
+        return;
 
     uint16_t j=0;
     for (uint16_t i=0; i < 16; i++){
