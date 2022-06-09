@@ -343,6 +343,8 @@ lease_expiry_cb(struct dpl_event * ev)
 static void
 handle_pan_request(struct uwb_pan_instance * pan, union pan_frame_t * request)
 {
+    struct pan_req_resp *req, *rsp;
+
     if (!pan->request_cb) {
         return;
     }
@@ -350,7 +352,13 @@ handle_pan_request(struct uwb_pan_instance * pan, union pan_frame_t * request)
     union pan_frame_t * response = pan->frames[(pan->idx)%pan->nframes];
     response->code = DWT_PAN_RESP;
 
-    if (pan->request_cb(request->long_address, &request->req, &response->req)) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
+    req = &request->req;
+    rsp = &response->req;
+#pragma GCC diagnostic pop
+
+    if (pan->request_cb(request->long_address, req, rsp)) {
         uwb_set_wait4resp(pan->dev_inst, false);
         uwb_write_tx_fctrl(pan->dev_inst, sizeof(union pan_frame_t), 0);
         uwb_write_tx(pan->dev_inst, response->array, 0, sizeof(union pan_frame_t));
