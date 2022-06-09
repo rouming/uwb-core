@@ -37,6 +37,8 @@ static int
 nrng_write_line(void *buf, char* data, int len)
 {
     nrng_json_t * json = buf;
+
+    len = min(len, sizeof(json->iobuf) - json->idx);
     for (uint16_t i=0; i < len; i++){
         json->iobuf[json->idx++] = data[i];
         if (data[i]=='\0'){
