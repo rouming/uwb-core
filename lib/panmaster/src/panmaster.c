@@ -302,7 +302,7 @@ first_free_slot_id(uint16_t node_addr, uint16_t role)
     {
         for (j=0;j<MYNEWT_VAL(PANMASTER_MAXNUM_NODES);j++)
         {
-            if (node_idx[j].addr == 0xffff || role != node_idx[j].role) {
+            if (node_idx[j].addr == 0xffff) {
                 continue;
             }
 
