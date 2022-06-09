@@ -285,30 +285,27 @@ pan_postprocess(struct dpl_event * ev){
 
 
 #if MYNEWT_VAL(UWB_PAN_VERBOSE)
-    struct uwb_pan_instance * pan = (struct uwb_pan_instance *)ev->ev_arg;
+    struct uwb_pan_instance * pan = (struct uwb_pan_instance *)dpl_event_get_arg(ev);
     struct uwb_dev * inst = pan->dev_inst;
     union pan_frame_t * frame = pan->frames[(pan->idx)%pan->nframes];
     if(pan->status.valid && frame->long_address == inst->my_long_address)
-        printf("{\"utime\": %lu,\"UUID\": \"%llX\",\"ID\": \"%X\",\"PANID\": \"%X\",\"slot\": %d}\n",
+        printf("{\"utime\": %lu,\"ID\": \"%X\",\"PANID\": \"%X\",\"slot\": %d}\n",
             dpl_cputime_ticks_to_usecs(dpl_cputime_get32()),
-            frame->long_address,
-            frame->short_address,
-            frame->pan_id,
-            frame->slot_id
+            frame->req.short_address,
+            frame->req.pan_id,
+            frame->req.slot_id
         );
     else if (frame->code == DWT_PAN_REQ)
-        printf("{\"utime\": %lu,\"UUID\": \"%llX\",\"seq_num\": %d}\n",
+        printf("{\"utime\": %lu,\"seq_num\": %d}\n",
             dpl_cputime_ticks_to_usecs(dpl_cputime_get32()),
-            frame->long_address,
             frame->seq_num
         );
     else if (frame->code == DWT_PAN_RESP)
-        printf("{\"utime\": %lu,\"UUID\": \"%llX\",\"ID\": \"%X\",\"PANID\": \"%X\",\"slot\": %d}\n",
+        printf("{\"utime\": %lu,\"ID\": \"%X\",\"PANID\": \"%X\",\"slot\": %d}\n",
             dpl_cputime_ticks_to_usecs(dpl_cputime_get32()),
-            frame->long_address,
-            frame->short_address,
-            frame->pan_id,
-            frame->slot_id
+            frame->req.short_address,
+            frame->req.pan_id,
+            frame->req.slot_id
         );
 #endif
 }

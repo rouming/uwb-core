@@ -1,4 +1,6 @@
 /**
+ * Copyright (C) 2017-2018, Decawave Limited, All Rights Reserved
+ *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -22,10 +24,41 @@
 #include <stdio.h>
 #include <uwb_rng/uwb_rng.h>
 #include <json/json.h>
-#include <nrng/nrng_json.h>
+#include <nrng/nrng_encode.h>
 #include <survey/survey_encode.h>
 
 #if MYNEWT_VAL(SURVEY_VERBOSE)
+
+#define JSON_BUF_SIZE (1024)
+static char _buf[JSON_BUF_SIZE];
+static uint16_t idx=0;
+
+static void
+json_fflush(){
+    _buf[idx] = '\0';
+    printf("%s\n", _buf);
+    idx=0;
+}
+
+static void
+_json_fflush(){
+    _buf[idx] = '\0';
+    printf("%s", _buf);
+    idx=0;
+}
+
+static int
+json_write(void *buf, char* data, int len) {
+
+    if (idx + len > JSON_BUF_SIZE)
+        _json_fflush();
+
+    for (uint16_t i=0; i< len; i++)
+        _buf[i+idx] = data[i];
+    idx+=len;
+
+    return len;
+}
 
 /**
  * API for verbose JSON logging of survey resultss
@@ -37,13 +70,16 @@
 void
 survey_encode(survey_instance_t * survey, uint16_t seq, uint16_t idx){
 
+    struct json_encoder encoder;
+    struct json_value value;
+    int rc;
     uint32_t utime = os_cputime_ticks_to_usecs(os_cputime_get32());
     survey_nrngs_t * nrngs = survey->nrngs[idx%survey->nframes];
 
-    uint16_t mask = 0;
+    uint32_t mask = 0;
     // Workout which node responded to the request
     for (uint16_t i=0; i < survey->nnodes; i++){
-        if (nrngs->nrng[i].mask){
+        if (nrngs->nrng[i]->mask){
                 mask |= 1UL << i;
         }
     }
@@ -52,21 +88,51 @@ survey_encode(survey_instance_t * survey, uint16_t seq, uint16_t idx){
     if (survey->status.empty)
        return;
 
+    /* reset the state of the internal test */
+    memset(&encoder, 0, sizeof(encoder));
+    encoder.je_write = json_write;
+    encoder.je_arg= NULL;
+
+    rc = json_encode_object_start(&encoder);
+    JSON_VALUE_INT(&value,  utime);
+    rc |= json_encode_object_entry(&encoder, "utime", &value);
+    rc |= json_encode_object_key(&encoder, "survey");
+    rc |= json_encode_object_start(&encoder);
+
+    JSON_VALUE_UINT(&value, seq);
+    rc |= json_encode_object_entry(&encoder, "seq", &value);
+
+    JSON_VALUE_UINT(&value, mask);
+    rc |= json_encode_object_entry(&encoder, "mask", &value);
+    rc |= json_encode_object_key(&encoder, "nrngs");
+    rc |= json_encode_array_start(&encoder);
+
     for (uint16_t i=0; i < survey->nnodes; i++){
-        if (nrngs->nrng[i].mask){
-            nrng_json_t json={
-                .utime = utime,
-                .seq = seq,
-                .nsize = NumberOfBits(nrngs->nrng[i].mask)
-                };
-            for (uint16_t j=0; j < json.nsize; j++){
-                json.rng[j] = nrngs->nrng[i].rng[j];
-                json.ouid[j] = nrngs->nrng[i].uid[j];
+        if (nrngs->nrng[i]->mask){
+            JSON_VALUE_UINT(&value, nrngs->nrng[i]->mask);
+             rc |= json_encode_object_start(&encoder);
+            rc |= json_encode_object_entry(&encoder, "mask", &value);
+            rc |= json_encode_array_name(&encoder, "nrng");
+            rc |= json_encode_array_start(&encoder);
+            for (uint16_t j=0; j < NumberOfBits(nrngs->nrng[i]->mask); j++){
+#if MYNEWT_VAL(FLOAT_USER)
+                char float_string[16];
+                sprintf(float_string,"%f",nrngs->nrng[i]->rng[j]);
+                JSON_VALUE_STRING(&value, float_string);
+#else
+                JSON_VALUE_UINT(&value, *(uint32_t *)&nrngs->nrng[i]->rng[j]);
+#endif
+                rc |= json_encode_array_value(&encoder, &value);
             }
-            nrng_json_write(&json);
-            printf("%s\n", json.iobuf);
+            rc |= json_encode_array_finish(&encoder);
+            rc |= json_encode_object_finish(&encoder);
         }
     }
+    rc |= json_encode_array_finish(&encoder);
+    rc |= json_encode_object_finish(&encoder);
+    rc |= json_encode_object_finish(&encoder);
+    assert(rc == 0);
+    json_fflush();
 }
 
 #endif

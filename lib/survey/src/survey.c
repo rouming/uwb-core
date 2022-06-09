@@ -1,4 +1,6 @@
 /*
+ * Copyright 2018, Decawave Limited, All Rights Reserved
+ *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -20,7 +22,7 @@
 
 /**
  * @file survey.c
- * @author UWB Core <uwbcore@gmail.com>
+ * @author paul kettle
  * @date 02/2019
  *
  * @brief automatic site survey
@@ -38,6 +40,9 @@
 #include <hal/hal_gpio.h>
 #include <stats/stats.h>
 
+#if MYNEWT_VAL(SURVEY_ENABLED)
+#include <survey/survey.h>
+#endif
 #if MYNEWT_VAL(TDMA_ENABLED)
 #include <tdma/tdma.h>
 #endif
@@ -52,10 +57,6 @@
 #include <nrng/nrng.h>
 #include <uwb_rng/slots.h>
 #endif
-
-#if MYNEWT_VAL(SURVEY_ENABLED)
-#include <survey/survey.h>
-
 #if MYNEWT_VAL(SURVEY_VERBOSE)
 static void survey_complete_cb(struct dpl_event *ev);
 #include <survey/survey_encode.h>
@@ -96,27 +97,27 @@ survey_instance_t *
 survey_init(struct uwb_dev * inst, uint16_t nnodes, uint16_t nframes){
     assert(inst);
 
-    survey_instance_t * survey = (survey_instance_t*)uwb_mac_find_cb_inst_ptr(inst, UWBEXT_SURVEY);
+    survey_instance_t *survey = (survey_instance_t*)uwb_mac_find_cb_inst_ptr(inst, UWBEXT_SURVEY);
     if (survey == NULL) {
         survey = (survey_instance_t *) malloc(sizeof(survey_instance_t) + nframes * sizeof(survey_nrngs_t * ));
         assert(survey);
         memset(survey, 0, sizeof(survey_instance_t) + nframes * sizeof(survey_nrngs_t * ));
-/*
+
         for (uint16_t j = 0; j < nframes; j++){
             survey->nrngs[j] = (survey_nrngs_t *) malloc(sizeof(survey_nrngs_t) + nnodes * sizeof(survey_nrng_t * )); // Variable array alloc
             assert(survey->nrngs[j]);
             memset(survey->nrngs[j], 0, sizeof(survey_nrngs_t) + nnodes * sizeof(survey_nrng_t * ));
 
             for (uint16_t i = 0; i < nnodes; i++){
-                survey->nrngs[j]->nrng[i] = (survey_nrng_t * ) malloc(sizeof(survey_nrng_t) + nnodes * sizeof(dpl_float32_t));
+                survey->nrngs[j]->nrng[i] = (survey_nrng_t * ) malloc(sizeof(survey_nrng_t) + nnodes * sizeof(float));
                 assert(survey->nrngs[j]->nrng[i]);
-                memset(survey->nrngs[j]->nrng[i], 0, sizeof(survey_nrng_t) + nnodes * sizeof(dpl_float32_t));
+                memset(survey->nrngs[j]->nrng[i], 0, sizeof(survey_nrng_t) + nnodes * sizeof(float));
             }
         }
-*/
-//        survey->frame = (survey_broadcast_frame_t *) malloc(sizeof(survey_broadcast_frame_t) + nnodes * sizeof(dpl_float32_t));
-//        assert(survey->frame);
-        memset(survey->frame, 0, sizeof(survey_broadcast_frame_t));
+
+        survey->frame = (survey_broadcast_frame_t *) malloc(sizeof(survey_broadcast_frame_t) + nnodes * sizeof(float));
+        assert(survey->frame);
+        memset(survey->frame, 0, sizeof(survey_broadcast_frame_t) + nnodes * sizeof(float));
         survey_broadcast_frame_t frame = {
             .PANID = 0xDECA,
             .fctrl = FCNTL_IEEE_RANGE_16,
@@ -185,6 +186,11 @@ survey_free(survey_instance_t * survey)
     uwb_mac_remove_interface(survey->dev_inst, survey->cbs.id);
 
     if (survey->status.selfmalloc){
+        for (uint16_t j = 0; j < survey->nframes; j++){
+            for (uint16_t i = 0; i < survey->nnodes; i++)
+                free(survey->nrngs[j]->nrng[i]);
+            free(survey->nrngs[j]);
+        }
         free(survey->frame);
         free(survey);
     }else{
@@ -192,6 +198,20 @@ survey_free(survey_instance_t * survey)
     }
 }
 
+/**
+ * API to initialise the package
+ *
+ * @return void
+ */
+void
+survey_pkg_init(void)
+{
+    printf("{\"utime\": %lu,\"msg\": \"survey_pkg_init\"}\n",os_cputime_ticks_to_usecs(os_cputime_get32()));
+
+#if MYNEWT_VAL(UWB_DEVICE_0)
+    survey_init(uwb_dev_idx_lookup(0), MYNEWT_VAL(SURVEY_NNODES), MYNEWT_VAL(SURVEY_NFRAMES));
+#endif
+}
 
 #if MYNEWT_VAL(SURVEY_VERBOSE)
 /**
@@ -250,8 +270,7 @@ survey_slot_range_cb(struct dpl_event *ev)
 static struct dpl_event survey_complete_event;
 
 void
-survey_slot_broadcast_cb(struct dpl_event *ev)
-{
+survey_slot_broadcast_cb(struct dpl_event *ev){
     assert(ev);
     assert(dpl_event_get_arg(ev));
 
@@ -268,7 +287,7 @@ survey_slot_broadcast_cb(struct dpl_event *ev)
         uint64_t dx_time = tdma_rx_slot_start(tdma, slot->idx) & 0xFFFFFFFE00UL;
         survey_receiver(survey, dx_time);
     }
-    if((ccp->seq_num % survey->nnodes == survey->nnodes - 1) && survey->survey_complete_cb){
+    if(ccp->seq_num % survey->nnodes == survey->nnodes - 1 && survey->survey_complete_cb){
         dpl_event_init(&survey_complete_event, survey->survey_complete_cb, (void *) survey);
         dpl_eventq_put(dpl_eventq_dflt_get(), &survey_complete_event);
     }
@@ -294,24 +313,10 @@ survey_request(survey_instance_t * survey, uint64_t dx_time)
     nrng_request_delay_start(survey->nrng, 0xffff, dx_time, UWB_DATA_CODE_SS_TWR_NRNG, slot_mask, 0);
 
     survey_nrngs_t * nrngs = survey->nrngs[(survey->idx)%survey->nframes];
-    dpl_float32_t range[survey->nnodes];
-    uint16_t uid[survey->nnodes];
-
-    nrngs->nrng[slot_id].mask = nrng_get_ranges(survey->nrng,
-                                range,
+    nrngs->nrng[slot_id]->mask = nrng_get_ranges(survey->nrng,
+                                nrngs->nrng[slot_id]->rng,
                                 survey->nnodes,
-                                survey->nrng->idx
-        );
-    nrng_get_uids(survey->nrng,
-                                uid,
-                                survey->nnodes,
-                                survey->nrng->idx
-        );
-    for (uint16_t i = 0;i < survey->nnodes; i++){
-        nrngs->nrng[slot_id].rng[i] = range[i];
-        nrngs->nrng[slot_id].uid[i] = uid[i];
-    }
-
+                                survey->nrng->idx);
     return survey->status;
 }
 
@@ -352,7 +357,7 @@ survey_broadcaster(survey_instance_t * survey, uint64_t dx_time){
     struct uwb_dev * inst = survey->dev_inst;
     survey_nrngs_t * nrngs = survey->nrngs[survey->idx%survey->nframes];
 
-    survey->frame->mask = nrngs->nrng[inst->slot_id].mask;
+    survey->frame->mask = nrngs->nrng[inst->slot_id]->mask;
     survey->frame->seq_num = survey->seq_num;
     survey->frame->slot_id = inst->slot_id;
 
@@ -365,15 +370,9 @@ survey_broadcaster(survey_instance_t * survey, uint64_t dx_time){
     }
 
     assert(nnodes < survey->nnodes);
+    memcpy(survey->frame->rng, nrngs->nrng[inst->slot_id]->rng, nnodes * sizeof(float));
 
-//    memcpy(survey->frame->rng, nrngs->nrng[inst->slot_id].rng, nnodes * sizeof(dpl_float32_t));
-//    memcpy(survey->frame->uid, nrngs->nrng[inst->slot_id].uid, nnodes * sizeof(uint16_t));
-
-    uint16_t n = sizeof(struct _survey_broadcast_frame_t)
-        + sizeof(uint16_t)
-        + nnodes * sizeof(dpl_float32_t)
-        + nnodes * sizeof(uint16_t);
-
+    uint16_t n = sizeof(struct _survey_broadcast_frame_t) + nnodes * sizeof(float);
     uwb_write_tx(inst, survey->frame->array, 0, n);
     uwb_write_tx_fctrl(inst, n, 0);
     uwb_set_delay_start(inst, dx_time);
@@ -409,7 +408,7 @@ survey_receiver(survey_instance_t * survey, uint64_t dx_time){
     assert(err == DPL_OK);
     STATS_INC(survey->stat, receiver);
 
-    uint16_t n = sizeof(struct _survey_broadcast_frame_t) + sizeof(struct survey_nrng);
+    uint16_t n = sizeof(struct _survey_broadcast_frame_t) + survey->nnodes * sizeof(float);
     uint16_t timeout = uwb_phy_frame_duration(inst, n)
                         + survey->config.rx_timeout_delay;
     uwb_set_rx_timeout(inst, timeout);
@@ -465,21 +464,20 @@ rx_complete_cb(struct uwb_dev * inst, struct uwb_mac_interface * cbs)
                     return false;
                 if (frame->seq_num != survey->seq_num)
                     break;
-           //     uint16_t n = sizeof(survey_broadcast_frame_t) + survey->nnodes * sizeof(float);
-           //     if (inst->frame_len > n || frame->slot_id > survey->nnodes - 1) {
-           //         return false;
-           //     }
+                uint16_t n = sizeof(survey_broadcast_frame_t) + survey->nnodes * sizeof(float);
+                if (inst->frame_len > n || frame->slot_id > survey->nnodes - 1) {
+                    return false;
+                }
                 survey_nrngs_t * nrngs = survey->nrngs[survey->idx%survey->nframes];
                 uint16_t nnodes = NumberOfBits(frame->mask);
                 survey->status.empty = nnodes == 0;
-                if(survey->status.empty == 0){
+                if(!survey->status.empty){
                     nrngs->mask |= 1U << frame->slot_id;
-//                    nrngs->nrng[frame->slot_id].mask = frame->mask;
-//                    memcpy(nrngs->nrng[frame->slot_id].rng, frame->rng, nnodes * sizeof(dpl_float32_t));
-//                    memcpy(nrngs->nrng[frame->slot_id].uid, frame->uid, nnodes * sizeof(uint16_t));
+                    nrngs->nrng[frame->slot_id]->mask = frame->mask;
+                    memcpy(nrngs->nrng[frame->slot_id]->rng, frame->rng, nnodes * sizeof(float));
                     break;
                 }else{
-                    nrngs->nrng[frame->slot_id].mask = 0;
+                    nrngs->nrng[frame->slot_id]->mask = 0;
                     break;
                 }
             }
@@ -557,23 +555,4 @@ reset_cb(struct uwb_dev * inst, struct uwb_mac_interface * cbs)
     STATS_INC(survey->stat, reset);
 
     return true;
-}
-
-#endif // MYNEWT_VAL(SURVEY_ENABLED)
-
-/**
- * API to initialise the package
- *
- * @return void
- */
-void
-survey_pkg_init(void)
-{
-#if MYNEWT_VAL(SURVEY_ENABLED)
-    printf("{\"utime\": %lu,\"msg\": \"survey_pkg_init\"}\n",os_cputime_ticks_to_usecs(os_cputime_get32()));
-
-#if MYNEWT_VAL(UWB_DEVICE_0)
-    survey_init(uwb_dev_idx_lookup(0), MYNEWT_VAL(SURVEY_NNODES), MYNEWT_VAL(SURVEY_NFRAMES));
-#endif
-#endif // MYNEWT_VAL(SURVEY_ENABLED)
 }

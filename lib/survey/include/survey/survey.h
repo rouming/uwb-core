@@ -1,4 +1,6 @@
 /*
+ * Copyright 2018, Decawave Limited, All Rights Reserved
+ *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,7 +21,7 @@
 
 /**
  * @file survey.h
- * @author UWB Core <uwbcore@gmail.com>
+ * @author paul kettle
  * @date 2019
  *
  * @brief automatic site survey
@@ -43,15 +45,15 @@ extern "C" {
 #include <uwb_rng/slots.h>
 #include <stats/stats.h>
 
-typedef struct survey_nrng{
+typedef struct _survey_nrng_t{
     uint16_t mask;              //!< slot bitmask, the bit position in the mask decodes as the node slot_id
-    dpl_float32_t rng[MYNEWT_VAL(SURVEY_NNODES)];      //!< Ranging corresponding to above slot mask. When broadcasting the survey results we one transmit sucessful range requests.
-    uint16_t uid[MYNEWT_VAL(SURVEY_NNODES)];
+    float rng[];                //!< Ranging corresponding to above slot mask. When broadcasting the survey results we one transmit sucessful range requests.
+                                //!< Use NumberOfBits() BitIndex() to decode the bitmask
 }survey_nrng_t;
 
-typedef struct survey_nrngs{
+typedef struct _survey_nrngs_t{
     uint16_t mask;              //!< slot bitmask, the bit position in the mask decodes as the node slot_id
-    survey_nrng_t nrng[MYNEWT_VAL(SURVEY_NNODES)];     //!< Ranging corresponding to above slot mask. When broadcasting the survey results we one transmit sucessful range requests.
+    survey_nrng_t * nrng[];     //!< Ranging corresponding to above slot mask. When broadcasting the survey results we one transmit sucessful range requests.
 }survey_nrngs_t;
 
 //! N-Ranges request frame
@@ -60,7 +62,7 @@ typedef union {
         struct _ieee_rng_request_frame_t;
         uint16_t slot_id;
         uint16_t cell_id;
-        struct survey_nrng;
+        struct _survey_nrng_t;
     }__attribute__((__packed__,aligned(1)));
     uint8_t array[sizeof(struct _survey_broadcast_frame_t)];
 }survey_broadcast_frame_t;
